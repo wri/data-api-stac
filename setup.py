@@ -4,7 +4,7 @@ setup(
     name='src',
     packages=find_packages(),
     version='0.1.0',
-    description='description template',
-    author='John Brandt',
+    description='STAC Metadata scripts and notebooks',
+    author='WRI Data Lab',
     license='MIT',
 )

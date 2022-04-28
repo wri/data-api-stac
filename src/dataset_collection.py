@@ -6,7 +6,7 @@ import pystac
 import boto3
 import pandas as pd
 import json
-import datetime
+from datetime import datetime
 import os
 import requests
 from urllib3.exceptions import HTTPError
@@ -17,65 +17,126 @@ from shapely.geometry import shape
 
 from pystac.extensions.raster import RasterExtension, RasterBand
 from pystac.extensions.projection import ProjectionExtension
-from pystac import Item
+from pystac import Item, Collection, Catalog
 from pystac.stac_io import StacIO
 
 from stac_validator import stac_validator
 
 
-DATA_LAKE_BUCKET = os.environ["DATA_LAKE_BUCKET"]
+STAC_BUCKET = os.environ["STAC_BUCKET"]
+
 DATA_API_URL = os.environ["DATA_API_URL"]
-ROOT_DIR = os.environ["STAC_DIRECTORY"]
+ROOT_DIR = os.environ["STAC_ROOT_DIRECTORY"]
+
+stac_extensions = [
+     'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
+     'https://stac-extensions.github.io/projection/v1.0.0/schema.json'
+]
 
 
 class S3StacIO(StacIO):
-    def save_json(dest_href, data):
+    def save_json(self, dest_href, data):
         io = StringIO(json.dumps(data))
 
         s3_client = boto3.client("s3")
         parsed_url = urlparse(dest_href)
         key = parsed_url.path.lstrip("/")
         s3_client.put_object(
-            ACL="public-read",
-            Body=io.getValue(),
-            Bucket=DATA_LAKE_BUCKET,
+            Body=io.getvalue(),
+            Bucket=STAC_BUCKET,
             Key=key
         )
 
+    def read_text(self):
+        pass
 
-def create_dataset_collection(dataset: str, version: str):
-    """Creates STAC collection of dataset versions"""
+    def write_text(self):
+        pass
+
+
+def create_gfw_catalog():
+    """
+    Creates a static STAC catalog for all GFW raster datasets.
+    The dataset and its assets are read from the API and STAC things
+    are saved to S3.
+    """
+
+    session = requests.Session()
+    resp = session.get(f"{DATA_API_URL}/datasets")
+    if not resp.ok:
+        raise HTTPError("Datasets not found.")
+
+    catalog = pystac.Catalog(
+        id='gfw-catalog',
+        description='Global Forest Watch catalog.',
+        href=f"https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/gfw-catalog.json",
+        stac_extensions=stac_extensions,
+        catalog_type=pystac.CatalogType.ABSOLUTE_PUBLISHED
+    )
+    datasets = resp.json()["data"]
+
+    for dataset in datasets[:10]:
+        dataset_collection = create_dataset_collection(
+            dataset["dataset"], session=session
+        )
+
+        if dataset_collection is None:
+            continue
+        catalog.add_child(dataset_collection)
+
+    catalog.save_object(stac_io=S3StacIO())
+
+
+def create_dataset_collection(dataset: str, session=None):
+    """
+    Creates STAC collection for a raster dataset with all its versions
+    """
 
     s3_client = boto3.client("s3")
 
-    session = requests.Session()
+    if not session:
+        session = requests.Session()
     resp = session.get(f'{DATA_API_URL}/dataset/{dataset}')
     if not resp.ok:
         raise HTTPError(f"Dataset {dataset} not found")
+    dataset_data = resp.json()["data"]
 
-    versions = resp.json()["versions"]
-
+    versions = resp.json()["data"]["versions"]
+    version_collections = []
+    dataset_end_datetime = None
     for version in versions:
         version_url = f"{DATA_API_URL}/dataset/{dataset}/{version}"
         resp = session.get(version_url)
         if not resp.ok:
-            raise HTTPError("Data could not be found.")
-        version_data = resp.json()
+            continue
+        version_data = resp.json()["data"]
         content_date_range = version_data.get("content_date_range")
-        if not content_date_range:
-            raise ValidationError("Content date range is required")
+        if content_date_range:
+            # setting item datetime to content end date. For search, it seems reasonable
+            # for example, for getting latest collection
+            version_datetime = content_date_range[1]
+        else:
+            date_str = version.split('.')[0].lstrip("v")
+            try:
+                version_datetime = datetime.strptime(date_str, "%Y%m%d")
+            except ValueError:
+                print(f"No datetime found for {version}")
+                continue
 
         assets = version_data["assets"]
         if not assets:
+            print(f"no assets found for version {version}")
             continue
 
         tile_sets = list(
-            assets.filter(
-                lambda asset: asset[0] == "Raster tile set" and "zoom" not in asset[1]
+            filter(
+                lambda asset: asset[0] == "Raster tile set" and "zoom" not in asset[1],
+                assets
             )
         )
 
         if not tile_sets:
+            print(f"no tile sets for version {version}")
             continue
 
         tiles_root = os.path.dirname(tile_sets[0][1]).split("//")[1]
@@ -86,27 +147,65 @@ def create_dataset_collection(dataset: str, version: str):
         tiles_key = f'{tiles_base}/tiles.geojson'
         tiles_epsg = tiles_root.split("/")[4].lstrip("epsg-")
 
-        resp = s3_client.get_object(Key=tiles_key, Bucket=DATA_LAKE_BUCKET)
+        resp = s3_client.get_object(Key=tiles_key, Bucket=bucket)
 
         geojson = json.load(resp['Body'])
         tiles_df = pd.DataFrame(geojson['features'])
 
         version_items = []
-        for _, tile in tiles_df.iterrows():
+        for _, tile in tiles_df.iloc[:1].iterrows():
             tile.tile_id = tile.properties['name'].split('/')[-1].split('.')[0]
 
-            # setting item datetime to content end date. For search, it seems reasonable
-            # for example, for getting latest collection
-            tile.item_datetime = content_date_range[1]
-            tile.href = f'https://{DATA_LAKE_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{version}/items/{tile.tile_id}.json'
+            tile.item_datetime = version_datetime
+            tile.href = f"https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{version}/items/{tile.tile_id}.json"
             tile.tiles_base = tiles_base
             tile.bucket = bucket
             tile.epsg = tiles_epsg
-            tile_item = create_tile_item(tile)
+            tile_item = create_raster_item(tile)
+            tile_item.save_object(stac_io=S3StacIO())
             version_items.append(tile_item)
 
+        version_collection = Collection(
+            id=version,
+            title=version_data["metadata"]["title"],
+            description=version_data["metadata"]["overview"],
+            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{version}/{version}-collection.json',
+            extent=pystac.collection.Extent(
+                spatial=get_spatial_extent(version_items),
+                temporal=pystac.collection.TemporalExtent(
+                    intervals=[[version_datetime, version_datetime]]  # FIXME need to populate with actual start date
+                    )
+                )
+        )
 
-def create_tile_item(tile):
+        dataset_end_datetime = max(dataset_end_datetime, version_datetime)
+        version_collection.add_items(version_items)
+        version_collection.save_object(stac_io=S3StacIO())
+        version_collections.append(version_collection)
+
+    if not version_collections:
+        print(f"{dataset} does not have any assets to create STAC collection for.")
+        return
+
+    dataset_end_datetime = min([col.datetime for col in version_collections])
+    dataset_collection = Collection(
+            id=dataset,
+            title=dataset_data["metadata"]["title"],
+            description=dataset_data["metadata"]["overview"],
+            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{dataset}-collection.json',
+            extent=pystac.collection.Extent(
+                spatial=get_spatial_extent(version_items),
+                temporal=pystac.collection.TemporalExtent(
+                    intervals=[[version_datetime, dataset_end_datetime]]  # FIXME need to populate with actual start date
+                    )
+                )
+    )
+
+    dataset_collection.add_children(version_collections)
+    dataset_collection.save_object(stac_io=S3StacIO())
+
+
+def create_raster_item(tile):
     """Creates STAC item and associated asset for a given tile"""
     item = Item(
             id=tile.tile_id,
@@ -116,9 +215,11 @@ def create_tile_item(tile):
             href=tile.href,
             properties={}
         )
+
+    item.stac_extensions = stac_extensions
     projection = ProjectionExtension.ext(item)
     projection.epsg = tile.epsg
-    projection.shape = [tile.properties['height'], tile.properties['width'] ]    # spec specifies shape in Y, X order
+    projection.shape = [tile.properties['height'], tile.properties['width']]  # spec specifies shape in Y, X order
 
     asset_url = f'https://{tile.bucket}.s3.amazonaws.com/{tile.tiles_base}/{tile.tile_id}.tif'
     asset = pystac.Asset(
@@ -155,6 +256,8 @@ def create_tile_item(tile):
     ]
 
     item.add_asset(key=tile.tile_id, asset=asset)
+
+    return item
 
 
 def get_spatial_extent(items):

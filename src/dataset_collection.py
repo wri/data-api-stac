@@ -26,7 +26,6 @@ from stac_validator import stac_validator
 STAC_BUCKET = os.environ["STAC_BUCKET"]
 
 DATA_API_URL = os.environ["DATA_API_URL"]
-ROOT_DIR = os.environ["STAC_ROOT_DIRECTORY"]
 
 stac_extensions = [
      'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
@@ -69,7 +68,7 @@ def create_gfw_catalog():
     catalog = pystac.Catalog(
         id='gfw-catalog',
         description='Global Forest Watch catalog.',
-        href=f"https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/gfw-catalog.json",
+        href=f"https://{STAC_BUCKET}.s3.amazonaws.com/gfw-catalog.json",
         stac_extensions=stac_extensions,
         catalog_type=pystac.CatalogType.ABSOLUTE_PUBLISHED
     )
@@ -158,7 +157,7 @@ def create_dataset_collection(dataset: str, session=None):
             tile.tile_id = tile.properties['name'].split('/')[-1].split('.')[0]
 
             tile.item_datetime = version_datetime
-            tile.href = f"https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{version}/items/{tile.tile_id}.json"
+            tile.href = f"https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/{version}/items/{tile.tile_id}.json"
             tile.tiles_base = tiles_base
             tile.bucket = bucket
             tile.epsg = tiles_epsg
@@ -170,7 +169,7 @@ def create_dataset_collection(dataset: str, session=None):
             id=version,
             title=version_data["metadata"]["title"],
             description=version_data["metadata"]["overview"],
-            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{version}/{version}-collection.json',
+            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/{version}/{version}-collection.json',
             extent=pystac.collection.Extent(
                 spatial=get_spatial_extent(version_items),
                 temporal=pystac.collection.TemporalExtent(
@@ -194,7 +193,7 @@ def create_dataset_collection(dataset: str, session=None):
             id=dataset,
             title=dataset_data["metadata"]["title"],
             description=dataset_data["metadata"]["overview"],
-            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{ROOT_DIR}/{dataset}/{dataset}-collection.json',
+            href=f'https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/collection.json',
             extent=pystac.collection.Extent(
                 spatial=get_spatial_extent(version_items),
                 temporal=pystac.collection.TemporalExtent(

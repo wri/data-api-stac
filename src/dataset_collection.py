@@ -178,7 +178,10 @@ def create_dataset_collection(dataset: str, session=None):
                 )
         )
 
-        dataset_end_datetime = max(dataset_end_datetime, version_datetime)
+        dataset_end_datetime = (
+            version_datetime if dataset_end_datetime is None
+            else max(dataset_end_datetime, version_datetime)
+        )
         version_collection.add_items(version_items)
         for item in version_items:
             item.save_object(stac_io=S3StacIO(), include_self_link=False)
@@ -188,7 +191,6 @@ def create_dataset_collection(dataset: str, session=None):
         print(f"{dataset} does not have any assets to create STAC collection for.")
         return
 
-    dataset_end_datetime = min([col.datetime for col in version_collections])
     dataset_collection = Collection(
             id=dataset,
             title=dataset_data["metadata"]["title"],

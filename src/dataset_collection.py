@@ -217,6 +217,7 @@ def create_raster_item(tile):
             bbox=tile.properties['extent'],
             datetime=tile.item_datetime,
             href=tile.href,
+            stac_extensions=stac_extensions,
             properties={}
         )
 

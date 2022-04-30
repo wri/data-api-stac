@@ -32,8 +32,9 @@ stac_extensions = [
      'https://stac-extensions.github.io/projection/v1.0.0/schema.json'
 ]
 
-
-class S3StacIO(StacIO):
+class S3StacIO:
+    """Class with special implementation of STACIO's save_json method to save
+    STAC objects in S3"""
     def save_json(self, dest_href, data):
         io = StringIO(json.dumps(data))
 
@@ -45,12 +46,6 @@ class S3StacIO(StacIO):
             Bucket=STAC_BUCKET,
             Key=key
         )
-
-    def read_text(self):
-        pass
-
-    def write_text(self):
-        pass
 
 
 def create_gfw_catalog():

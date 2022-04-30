@@ -83,6 +83,7 @@ def create_gfw_catalog():
         if dataset_collection is None:
             continue
         catalog.add_child(dataset_collection)
+        dataset_collection.save_object(stac_io=S3StacIO(), include_self_link=False)
 
     catalog.save_object(stac_io=S3StacIO())
 
@@ -180,7 +181,8 @@ def create_dataset_collection(dataset: str, session=None):
 
         dataset_end_datetime = max(dataset_end_datetime, version_datetime)
         version_collection.add_items(version_items)
-        version_collection.save_object(stac_io=S3StacIO())
+        for item in version_items:
+            item.save_object(stac_io=S3StacIO(), include_self_link=False)
         version_collections.append(version_collection)
 
     if not version_collections:
@@ -202,7 +204,9 @@ def create_dataset_collection(dataset: str, session=None):
     )
 
     dataset_collection.add_children(version_collections)
-    dataset_collection.save_object(stac_io=S3StacIO())
+    for collection in version_collections:
+        collection.save_object(stac_io=S3StacIO(), include_self_link=False)
+
 
 
 def create_raster_item(tile):

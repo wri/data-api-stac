@@ -1,6 +1,3 @@
-
-from jsonschema import ValidationError
-import rasterio
 from io import StringIO
 import pystac
 import boto3
@@ -18,9 +15,6 @@ from shapely.geometry import shape
 from pystac.extensions.raster import RasterExtension, RasterBand
 from pystac.extensions.projection import ProjectionExtension
 from pystac import Item, Collection, Catalog
-from pystac.stac_io import StacIO
-
-from stac_validator import stac_validator
 
 
 STAC_BUCKET = os.environ["STAC_BUCKET"]
@@ -51,7 +45,7 @@ class S3StacIO:
 def create_gfw_catalog():
     """
     Creates a static STAC catalog for all GFW raster datasets.
-    The dataset and its assets are read from the API and STAC things
+    The dataset and its assets are read from the API and STAC objects
     are saved to S3.
     """
 
@@ -60,9 +54,9 @@ def create_gfw_catalog():
     if not resp.ok:
         raise HTTPError("Datasets not found.")
 
-    catalog = pystac.Catalog(
+    catalog = Catalog(
         id='gfw-catalog',
-        description='Global Forest Watch catalog.',
+        description='Global Forest Watch STAC catalog',
         href=f"https://{STAC_BUCKET}.s3.amazonaws.com/gfw-catalog.json",
         stac_extensions=stac_extensions,
         catalog_type=pystac.CatalogType.ABSOLUTE_PUBLISHED
@@ -79,7 +73,7 @@ def create_gfw_catalog():
         catalog.add_child(dataset_collection)
         dataset_collection.save_object(stac_io=S3StacIO(), include_self_link=False)
 
-    catalog.save_object(stac_io=S3StacIO())
+    catalog.save_object(stac_io=S3StacIO(), include_self_link=False)
 
 
 def create_dataset_collection(dataset: str, session=None):
@@ -157,7 +151,6 @@ def create_dataset_collection(dataset: str, session=None):
             tile.bucket = bucket
             tile.epsg = tiles_epsg
             tile_item = create_raster_item(tile)
-            tile_item.save_object(stac_io=S3StacIO())
             version_items.append(tile_item)
 
         version_collection = Collection(
@@ -182,6 +175,7 @@ def create_dataset_collection(dataset: str, session=None):
             item.save_object(stac_io=S3StacIO(), include_self_link=False)
         version_collections.append(version_collection)
 
+
     if not version_collections:
         print(f"{dataset} does not have any assets to create STAC collection for.")
         return
@@ -198,11 +192,11 @@ def create_dataset_collection(dataset: str, session=None):
                     )
                 )
     )
-
     dataset_collection.add_children(version_collections)
     for collection in version_collections:
         collection.save_object(stac_io=S3StacIO(), include_self_link=False)
 
+    return dataset_collection
 
 
 def create_raster_item(tile):
@@ -265,8 +259,5 @@ def get_spatial_extent(items):
     polygons = [shape(item.geometry) for item in items]
     # Returns a union of the two geojson polygons for each item
     unioned_geometry = unary_union(polygons)
-    
     # Set the bbox to be the bounds of the unified polygon and return the spatial extent of the collection
     return pystac.SpatialExtent(bboxes=[unioned_geometry.bounds])
-
-

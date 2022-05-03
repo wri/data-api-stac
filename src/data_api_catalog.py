@@ -19,10 +19,10 @@ from pystac.extensions.projection import ProjectionExtension
 from pystac.extensions.version import VersionExtension
 from pystac import Item, Collection, Catalog
 
+from .globals import logger, STAC_BUCKET, DATA_API_URL, CATALOG_NAME
+from .constants import AssetType
+from .raster_objects import create_raster_collection
 
-STAC_BUCKET = os.environ["STAC_BUCKET"]
-DATA_API_URL = os.environ["DATA_API_URL"]
-CATALOG_NAME = 'gfw-catalog'
 
 stac_extensions = [
      'https://stac-extensions.github.io/projection/v1.0.0/schema.json',
@@ -80,13 +80,10 @@ def create_gfw_catalog():
     catalog.save_object(stac_io=S3StacIO())
 
 
-def create_dataset_collection(dataset: str, session=None):
+def create_raster_dataset_collection(dataset: str, session=None):
     """
     Creates STAC collection for a raster dataset with all its versions
     """
-
-    s3_client = boto3.client("s3")
-
     if not session:
         session = requests.Session()
     resp = session.get(f"{DATA_API_URL}/dataset/{dataset}")
@@ -129,41 +126,15 @@ def create_dataset_collection(dataset: str, session=None):
             print(f"no assets found for version {version}")
             continue
 
-        tile_sets = list(
-            filter(
-                lambda asset: asset[0] == "Raster tile set" and "zoom" not in asset[1],
-                assets
+        source_asset_type = get_dataset_type(assets)
+
+        if not source_asset_type != AssetType.raster_tile_set:
+            logger.warning(
+                f"STAC not implemented for asset type {source_asset_type} yet."
             )
-        )
-        if not tile_sets:
-            print(f"no tile sets for version {version}")
             continue
 
-        tiles_root = os.path.dirname(tile_sets[0][1]).split("//")[1]
-        bucket = tiles_root.split("/")[0]
-
-        # will expose the compressed gdal-geotiff version of the tilesets
-        tiles_base = "/".join(tiles_root.split('/')[1:-1] + ["gdal-geotiff"])
-        tiles_key = f'{tiles_base}/tiles.geojson'
-        tiles_epsg = tiles_root.split("/")[4].lstrip("epsg-")
-
-        resp = s3_client.get_object(Key=tiles_key, Bucket=bucket)
-
-        geojson = json.load(resp['Body'])
-        tiles_df = pd.DataFrame(geojson['features'])
-
-        version_items = []
-        for _, tile in tiles_df.iterrows():
-            tile.tile_id = tile.properties['name'].split('/')[-1].split('.')[0]
-
-            tile.item_datetime = version_datetime
-            tile.href = f"https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/{version}/items/{tile.tile_id}.json"
-            tile.tiles_base = tiles_base
-            tile.bucket = bucket
-            tile.epsg = tiles_epsg
-            tile_item = create_raster_item(tile)
-            version_items.append(tile_item)
-
+        version_items = create_raster_collection(dataset, version, version_datetime)
         dataset_collection = Collection(
             id=dataset,
             title=dataset_data["metadata"]["title"],
@@ -221,65 +192,30 @@ def create_dataset_collection(dataset: str, session=None):
     return latest_collection
 
 
-def create_raster_item(tile):
-    """Creates STAC item and associated asset for a given tile"""
-    item = Item(
-            id=tile.tile_id,
-            geometry=tile.geometry,
-            bbox=tile.properties['extent'],
-            datetime=tile.item_datetime,
-            stac_extensions=stac_extensions,
-            properties={}
-        )
-
-    item.set_self_href(tile.href)
-
-    projection = ProjectionExtension.ext(item)
-    projection.epsg = tile.epsg
-    projection.shape = [tile.properties['height'], tile.properties['width']]  # spec specifies shape in Y, X order
-
-    asset_url = f'https://{tile.bucket}.s3.amazonaws.com/{tile.tiles_base}/{tile.tile_id}.tif'
-    asset = pystac.Asset(
-        href=asset_url,
-        title=tile.tile_id,
-        roles=["data"],
-        media_type=pystac.MediaType.COG
-    )
-    raster = RasterExtension.ext(asset)
-
-    raster.bands = [
-        RasterBand(
-            {
-                'data_type': band['data_type'],
-                'nodata': band['no_data'],
-                'spatial_resolution': tile.properties['pixelxsize'],
-                'statistics': {
-                    'minimum': (
-                        band.get('stats', {}).get('min')
-                        if isinstance(band['stats'], dict) else None
-                    ),
-                    'maximum': (
-                        band.get('stats', {}).get('max')
-                        if isinstance(band['stats'], dict) else None
-                    ),
-                    'stddev': (
-                        band.get('stats', {}).get('std_dev')
-                        if isinstance(band['stats'], dict) else None
-                    )
-                }
-            }
-        ) for band in tile.properties['bands']
-
-    ]
-
-    item.add_asset(key=tile.tile_id, asset=asset)
-
-    return item
-
-
 def get_spatial_extent(items):
     polygons = [shape(item.geometry) for item in items]
     # Returns a union of the two geojson polygons for each item
     unioned_geometry = unary_union(polygons)
     # Set the bbox to be the bounds of the unified polygon and return the spatial extent of the collection
     return pystac.SpatialExtent(bboxes=[unioned_geometry.bounds])
+
+
+def get_dataset_type(assets):
+    """Get whether the default assets are of raster, vector or tabular type"""
+    if list(
+        filter(lambda asset: asset[0] == AssetType.database_table, assets)
+    ):
+        return AssetType.database_table
+
+    if list(
+        filter(lambda asset: asset[0] == AssetType.raster_tile_set, assets)
+    ):
+        return AssetType.raster_tile_set
+
+    if list(
+        filter(lambda asset:  asset[0].lower() == AssetType.geo_database_table, assets)
+    ):
+        return AssetType.geo_database_table
+
+    logger.info("Did not detect one of the known source asset types")
+    return

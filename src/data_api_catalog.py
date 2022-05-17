@@ -12,16 +12,15 @@ from urllib.parse import urlparse
 from collections import OrderedDict
 
 from shapely.ops import unary_union
-from shapely.geometry import shape
+from shapely.geometry import box, shape
 
-from pystac.extensions.raster import RasterExtension, RasterBand
-from pystac.extensions.projection import ProjectionExtension
 from pystac.extensions.version import VersionExtension
-from pystac import Item, Collection, Catalog
+from pystac import Collection, Catalog
 
 from .globals import logger, STAC_BUCKET, DATA_API_URL, CATALOG_NAME
 from .constants import AssetType
 from .raster_objects import create_raster_collection
+from .tabular_objects import create_tabular_collection
 
 
 stac_extensions = [
@@ -29,6 +28,7 @@ stac_extensions = [
      'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
      'https://stac-extensions.github.io/version/v1.0.0/schema.json'
 ]
+
 
 class S3StacIO:
     """Class with special implementation of STACIO's save_json method to save
@@ -68,6 +68,7 @@ def create_gfw_catalog():
     datasets = resp.json()["data"]
 
     for dataset in datasets:
+        logger.info(f"Creating STAC collection for {dataset['dataset']}")
         dataset_collection = create_dataset_collection(
             dataset["dataset"], session=session
         )
@@ -80,7 +81,7 @@ def create_gfw_catalog():
     catalog.save_object(stac_io=S3StacIO())
 
 
-def create_raster_dataset_collection(dataset: str, session=None):
+def create_dataset_collection(dataset: str, session=None):
     """
     Creates STAC collection for a raster dataset with all its versions
     """
@@ -88,24 +89,25 @@ def create_raster_dataset_collection(dataset: str, session=None):
         session = requests.Session()
     resp = session.get(f"{DATA_API_URL}/dataset/{dataset}")
     if not resp.ok:
-        raise HTTPError(f"Dataset {dataset} not found")
+        logger.error(f"Dataset {dataset} not found")
+        return
     dataset_data = resp.json()["data"]
 
     resp = session.get(f"{DATA_API_URL}/dataset/{dataset}/latest")
     if not resp.ok:
-        print(f"Dataset {dataset} does not have a latest version")
+        logger.error(f"Dataset {dataset} does not have a latest version")
         return
     latest_version = resp.json()["data"]["version"]
 
     versions = dataset_data["versions"]
     dataset_collections = OrderedDict()
-    dataset_end_datetime = None
-    
+
     included_versions = versions[:versions.index(latest_version) + 1]
     for index, version in enumerate(sorted(included_versions)):
         version_url = f"{DATA_API_URL}/dataset/{dataset}/{version}"
         resp = session.get(version_url)
         if not resp.ok:
+            logger.error(f"Dataset version {version} not found")
             continue
         version_data = resp.json()["data"]
         content_date_range = version_data.get("content_date_range")
@@ -118,29 +120,42 @@ def create_raster_dataset_collection(dataset: str, session=None):
             try:
                 version_datetime = datetime.strptime(date_str, "%Y%m%d")
             except ValueError:
-                print(f"No datetime found for {version}")
+                logger.error(f"No datetime found for {version}")
                 continue
 
         assets = version_data["assets"]
         if not assets:
-            print(f"no assets found for version {version}")
+            logger.error(f"no assets found for version {version}")
             continue
 
         source_asset_type = get_dataset_type(assets)
 
-        if not source_asset_type != AssetType.raster_tile_set:
+        supported_types = [AssetType.raster_tile_set, AssetType.database_table]
+
+        if source_asset_type not in supported_types:
             logger.warning(
                 f"STAC not implemented for asset type {source_asset_type} yet."
             )
             continue
 
-        version_items = create_raster_collection(dataset, version, version_datetime)
+        if source_asset_type == AssetType.database_table:
+            dataset_items = create_tabular_collection(dataset, version, version_datetime)
+            if not dataset_items:
+                continue
+
+        if source_asset_type == AssetType.raster_tile_set:
+            dataset_items = create_raster_collection(
+                dataset, version, assets, version_datetime
+            )
+            if not dataset_items:
+                continue
+
         dataset_collection = Collection(
             id=dataset,
             title=dataset_data["metadata"]["title"],
             description=dataset_data["metadata"]["overview"],
             extent=pystac.collection.Extent(
-                spatial=get_spatial_extent(version_items),
+                spatial=get_spatial_extent(dataset_items),
                 temporal=pystac.collection.TemporalExtent(
                     intervals=[[version_datetime, version_datetime]]  # FIXME need to populate with actual start date
                 )
@@ -151,18 +166,15 @@ def create_raster_dataset_collection(dataset: str, session=None):
             f"https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/{version}/{version}-collection.json",
         )
 
-        dataset_end_datetime = (
-            version_datetime if dataset_end_datetime is None
-            else max(dataset_end_datetime, version_datetime)
-        )
-        dataset_collection.add_items(version_items)
-        for item in version_items:
+        dataset_collection.add_items(dataset_items)
+        for item in dataset_items:
             item.save_object(stac_io=S3StacIO(), include_self_link=False)
         dataset_collections[version] = dataset_collection
 
-
     if not dataset_collections:
-        print(f"{dataset} does not have any assets to create STAC collection for.")
+        logger.error(
+            f"{dataset} does not have any valid assets to create STAC collection for."
+        )
         return
 
     for index, (version, collection) in enumerate(dataset_collections.items()):
@@ -185,7 +197,7 @@ def create_raster_dataset_collection(dataset: str, session=None):
     latest_collection = list(dataset_collections.values())[-1].clone()
     latest_collection.set_self_href(
         "/".join(
-        latest_collection.get_self_href().split('/')[:-1] + ["collection.json"]
+            latest_collection.get_self_href().split('/')[:-1] + ["collection.json"]
         )
     )
 
@@ -193,7 +205,10 @@ def create_raster_dataset_collection(dataset: str, session=None):
 
 
 def get_spatial_extent(items):
-    polygons = [shape(item.geometry) for item in items]
+    polygons = [
+        shape(item.geometry) if item.geometry else box(*item.bbox)
+        for item in items
+    ]
     # Returns a union of the two geojson polygons for each item
     unioned_geometry = unary_union(polygons)
     # Set the bbox to be the bounds of the unified polygon and return the spatial extent of the collection
@@ -217,5 +232,9 @@ def get_dataset_type(assets):
     ):
         return AssetType.geo_database_table
 
-    logger.info("Did not detect one of the known source asset types")
+    logger.error("Did not detect one of the known source asset types")
     return
+
+
+if __name__ == "__main__":
+    create_gfw_catalog()

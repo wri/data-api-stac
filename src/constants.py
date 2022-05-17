@@ -6,9 +6,14 @@ RASTER_EXTENSIONS = [
      'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
 ]
 
+TABULAR_EXTENSIONS = [
+    
+]
+
 DATASET_EXTENSIONS = [
      'https://stac-extensions.github.io/version/v1.0.0/schema.json'
 ]
+
 
 class AssetType(str, Enum):
     raster_tile_set = "Raster tile set"
@@ -20,3 +25,21 @@ class AssetType(str, Enum):
     csv = "csv"
     tsv = "tsv"
     grid_1x1 = "1x1 grid"
+
+
+class AreaType(str, Enum):
+    gadm = "gadm"
+    wdpa_protected_areas = "wdpa_protected_areas"
+    geostore = "geostore"
+
+
+class GadmAreas(str, Enum):
+    iso = "iso"
+    adm1 = "adm1"
+    adm2 = "adm2"
+
+
+class TabularDataType(str, Enum):
+    alert = "alerts"
+    change = "change"
+    summary = "summary"

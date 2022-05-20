@@ -14,11 +14,12 @@ from collections import OrderedDict
 from shapely.ops import unary_union
 from shapely.geometry import box, shape
 
+from pystac.extensions.table import Column, TableExtension
 from pystac.extensions.version import VersionExtension
 from pystac import Collection, Catalog
 
 from .globals import logger, STAC_BUCKET, DATA_API_URL, CATALOG_NAME
-from .constants import AssetType
+from .constants import AssetType, TABULAR_EXTENSIONS
 from .raster_objects import create_raster_collection
 from .tabular_objects import create_tabular_collection
 
@@ -167,6 +168,22 @@ def create_dataset_collection(dataset: str, session=None):
         )
 
         dataset_collection.add_items(dataset_items)
+        if source_asset_type in [
+            AssetType.geo_database_table, AssetType.database_table
+        ]:
+            resp = requests.get(f"{DATA_API_URL}/dataset/{dataset}/{version}/fields")
+            if resp.ok:
+                fields = resp.json()["data"]
+                dataset_collection.stac_extensions += TABULAR_EXTENSIONS
+                table = TableExtension.ext(dataset_collection)
+                table.columns = [
+                    {
+                        "name": field["field_name"],
+                        "description": field["field_description"]
+                    }
+                    for field in fields
+                ]
+
         for item in dataset_items:
             item.save_object(stac_io=S3StacIO(), include_self_link=False)
         dataset_collections[version] = dataset_collection

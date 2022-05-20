@@ -7,7 +7,7 @@ RASTER_EXTENSIONS = [
 ]
 
 TABULAR_EXTENSIONS = [
-    
+    'https://stac-extensions.github.io/table/v1.2.0/schema.json'
 ]
 
 DATASET_EXTENSIONS = [

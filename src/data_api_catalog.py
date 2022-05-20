@@ -26,7 +26,6 @@ from .tabular_objects import create_tabular_collection
 
 stac_extensions = [
      'https://stac-extensions.github.io/projection/v1.0.0/schema.json',
-     'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
      'https://stac-extensions.github.io/version/v1.0.0/schema.json'
 ]
 
@@ -108,7 +107,7 @@ def create_dataset_collection(dataset: str, session=None):
         version_url = f"{DATA_API_URL}/dataset/{dataset}/{version}"
         resp = session.get(version_url)
         if not resp.ok:
-            logger.error(f"Dataset version {version} not found")
+            logger.error(f"Dataset version {dataset}:{version} not found")
             continue
         version_data = resp.json()["data"]
         content_date_range = version_data.get("content_date_range")
@@ -121,12 +120,12 @@ def create_dataset_collection(dataset: str, session=None):
             try:
                 version_datetime = datetime.strptime(date_str, "%Y%m%d")
             except ValueError:
-                logger.error(f"No datetime found for {version}")
+                logger.error(f"No datetime found for {dataset}:{version}")
                 continue
 
         assets = version_data["assets"]
         if not assets:
-            logger.error(f"no assets found for version {version}")
+            logger.error(f"no assets found for {dataset}:{version}")
             continue
 
         source_asset_type = get_dataset_type(assets)
@@ -140,7 +139,9 @@ def create_dataset_collection(dataset: str, session=None):
             continue
 
         if source_asset_type == AssetType.database_table:
-            dataset_items = create_tabular_collection(dataset, version, version_datetime)
+            dataset_items = create_tabular_collection(
+                dataset, version, version_datetime
+            )
             if not dataset_items:
                 continue
 

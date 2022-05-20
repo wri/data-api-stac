@@ -179,7 +179,8 @@ def create_dataset_collection(dataset: str, session=None):
                 table.columns = [
                     {
                         "name": field["field_name"],
-                        "description": field["field_description"]
+                        "description": field["field_description"],
+                        "type": field["field_type"]
                     }
                     for field in fields
                 ]

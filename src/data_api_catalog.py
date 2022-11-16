@@ -1,29 +1,27 @@
+import json
+import os
+from collections import OrderedDict
+from datetime import datetime
 from io import StringIO
-import pystac
+from ipaddress import collapse_addresses
+from typing import Optional, Union
+from urllib.parse import urlparse
+
 import boto3
 import pandas as pd
-import json
-from datetime import datetime
-import os
+import pystac
 import requests
-from urllib3.exceptions import HTTPError
-from urllib.parse import urlparse
-from typing import Union, Optional
-
-from collections import OrderedDict
-
-from shapely.ops import unary_union
-from shapely.geometry import box, shape
-
+from pystac import Catalog, Collection
 from pystac.extensions.table import Column, TableExtension
 from pystac.extensions.version import VersionExtension
-from pystac import Collection, Catalog
+from shapely.geometry import box, shape
+from shapely.ops import unary_union
+from urllib3.exceptions import HTTPError
 
-from .globals import logger, STAC_BUCKET, DATA_API_URL, CATALOG_NAME
-from .constants import AssetType, TABULAR_EXTENSIONS
+from .constants import TABULAR_EXTENSIONS, AssetType
+from .globals import CATALOG_NAME, DATA_API_URL, STAC_BUCKET, logger
 from .raster_objects import create_raster_collection
 from .tabular_objects import create_tabular_collection
-
 
 stac_extensions = [
     "https://stac-extensions.github.io/projection/v1.0.0/schema.json",
@@ -56,7 +54,7 @@ class S3StacIO:
         s3_client.put_object(Body=io.getvalue(), Bucket=STAC_BUCKET, Key=key)
 
 
-def create_catalog(overwrite=False):
+def create_catalog():
     """
     Creates a static STAC catalog for all GFW raster datasets.
     The dataset and its assets are read from the API and STAC objects
@@ -71,28 +69,23 @@ def create_catalog(overwrite=False):
     catalog = None
     try:
         catalog = Catalog.from_file(CATALOG_URL)
-    except Exception as e:
-        logger.warning(
-            f"Error enocuntered fetching catalog ${CATALOG_URL} not found creating one: ",
-            e,
+    except FileNotFoundError:
+        logger.info(f"Catalog {CATALOG_URL} not found so creating one")
+
+    if catalog is not None:
+        raise FileExistsError(
+            f"Catalog with url {CATALOG_URL} already exists. Check update method."
         )
 
-    if overwrite or catalog is None:
-        catalog = Catalog(
-            id=CATALOG_NAME,
-            description="Global Forest Watch STAC catalog",
-            href=CATALOG_URL,
-            stac_extensions=stac_extensions,
-            catalog_type=pystac.CatalogType.ABSOLUTE_PUBLISHED,
-        )
+    catalog = Catalog(
+        id=CATALOG_NAME,
+        description="Global Forest Watch STAC catalog",
+        href=CATALOG_URL,
+        stac_extensions=stac_extensions,
+        catalog_type=pystac.CatalogType.ABSOLUTE_PUBLISHED,
+    )
 
     datasets = resp.json()["data"]
-
-    # this has not effect if overwrite is `True` since catalog is empty so no need to wrap in if logic
-    existing_items = [dataset.id for dataset in catalog.get_children()]
-    datasets = [
-        dataset for dataset in datasets if dataset["dataset"] not in existing_items
-    ]
 
     for dataset in datasets:
         logger.info(f"Creating STAC collection for {dataset['dataset']}")
@@ -124,11 +117,14 @@ def update_catalog(dataset_name: str) -> None:
         if not dataset_collection:
             return
     else:
-        return
+        dataset_collection = update_dataset_collection(dataset_collection)
+        if not dataset_collection:
+            return
 
+    catalog.remove_child(dataset_collection.id)
     catalog.add_child(dataset_collection)
-    dataset_collection.save_object(stac_io=S3StacIO(), include_self_link=True)
 
+    dataset_collection.save_object(stac_io=S3StacIO(), include_self_link=True)
     catalog.save_object(stac_io=S3StacIO())
 
 
@@ -138,8 +134,8 @@ def create_dataset_version_collection(
     version_url = f"{DATA_API_URL}/dataset/{dataset_name}/{version}"
     try:
         resp = requests.get(version_url)
-    except Exception as e:
-        logger.error("Unable to fetch {dataset_name}:{version} data", e)
+    except Exception as exc:
+        logger.error(f"Unable to fetch {dataset_name}:{version} data: {exc}")
         return
 
     if not resp.ok:
@@ -176,14 +172,6 @@ def create_dataset_version_collection(
         logger.warning(f"STAC not implemented for asset type {source_asset_type} yet.")
         return
 
-    # if source_asset_type == AssetType.database_table:
-    #     dataset_items = create_tabular_collection(
-    #         dataset, version, version_datetime
-    #     )
-    #     if not dataset_items:
-    #         continue
-
-    # if source_asset_type == AssetType.raster_tile_set:
     try:
         raster_item_groups = create_raster_collection(
             dataset_name, version, assets, version_datetime
@@ -215,7 +203,6 @@ def create_dataset_version_collection(
     dataset_collection.set_self_href(
         f"https://{STAC_BUCKET}.s3.amazonaws.com/{dataset_name}/{version}/{version}-collection.json",
     )
-
     if len(raster_item_groups.keys()) > 1:
         raster_collections = []
         for raster_group, items in raster_item_groups.items():
@@ -241,67 +228,45 @@ def create_dataset_version_collection(
     else:
         dataset_collection.add_items(list(raster_item_groups.values())[0])
 
+    for item in all_items:
+        item.save_object(stac_io=S3StacIO(), include_self_link=False)
+
     return dataset_collection
 
 
-def create_dataset_collection(
-    dataset_name: str, session=None
-) -> Union[None, Collection]:
+def create_dataset_collection(dataset_name: str) -> Union[None, Collection]:
     """
     Creates STAC collection for a raster dataset with all its versions
     """
-    if not session:
-        session = requests.Session()
-    resp = session.get(f"{DATA_API_URL}/dataset/{dataset_name}")
+
+    resp = requests.get(f"{DATA_API_URL}/dataset/{dataset_name}")
     if not resp.ok:
         logger.error(f"Dataset {dataset_name} not found")
         return
     dataset_data = resp.json()["data"]
-    versions = dataset_data["versions"]
-
-    resp = session.get(f"{DATA_API_URL}/dataset/{dataset_name}/latest")
-    if resp.ok:
-        latest_version = resp.json()["data"]["version"]
-    elif len(versions) > 0:
-        logger.warning(f"Dataset {dataset_name} has no latest version")
-        latest_version = sorted(versions)[-1]
-    else:
-        logger.error(f"No versions found for {dataset_name}")
+    versions = sorted(dataset_data["versions"])
+    if len(versions) == 0:
+        logger.warning(f"No dataset versions and assets found for {dataset_name}.")
         return
 
-    dataset_collections = OrderedDict()
+    latest_version = _get_latest_version(dataset_name)
+    if not latest_version:
+        logger.warning(
+            f"Dataset {dataset_name} has no latest tagged version. Setting more recent version as latest"
+        )
+        latest_version = sorted(versions)[-1]
 
+    dataset_collections = OrderedDict()
     included_versions = versions[: versions.index(latest_version) + 1]
-    for index, version in enumerate(sorted(included_versions)):
+    for version in included_versions:
         dataset_collection: Union[Collection, None] = create_dataset_version_collection(
             dataset_name,
             version,
             dataset_data["metadata"]["title"],
             dataset_data["metadata"]["overview"],
         )
-
-        # if source_asset_type in [
-        #     AssetType.geo_database_table,
-        #     AssetType.database_table,
-        # ]:
-        #     resp = requests.get(
-        #         f"{DATA_API_URL}/dataset/{dataset_name}/{version}/fields"
-        #     )
-        #     if resp.ok:
-        #         fields = resp.json()["data"]
-        #         dataset_collection.stac_extensions += TABULAR_EXTENSIONS
-        #         table = TableExtension.ext(dataset_collection)
-        #         table.columns = [
-        #             {
-        #                 "name": field["field_name"],
-        #                 "description": field["field_description"],
-        #                 "type": field["field_type"],
-        #             }
-        #             for field in fields
-        #         ]
-
-        for item in all_items:
-            item.save_object(stac_io=S3StacIO(), include_self_link=False)
+        if not dataset_collection:
+            continue
         dataset_collections[version] = dataset_collection
 
     if not dataset_collections:
@@ -310,6 +275,53 @@ def create_dataset_collection(
         )
         return
 
+    latest_collection = version_and_store_collections(
+        dataset_collections, latest_version
+    )
+
+    return latest_collection
+
+
+def update_dataset_collection(dataset_collection):
+    resp = requests.get(f"{DATA_API_URL}/dataset/{dataset_collection.id}")
+    if not resp.ok:
+        logger.error(f"Dataset {dataset_collection.id} not found")
+        return
+    dataset_data = resp.json()["data"]
+    versions = sorted(dataset_data["versions"])
+
+    cat_latest_version = dataset_collection.to_dict()["version"]
+    api_latest_version = _get_latest_version(dataset_collection.id)
+    if cat_latest_version == api_latest_version:
+        logger.info(f"No new versions found for dataset {dataset_collection.id}.")
+        return
+
+    start_idx = versions.index(cat_latest_version) + 1
+
+    dataset_collections = OrderedDict()
+    new_versions = versions[start_idx:]
+    for version in new_versions:
+        dataset_version_collection = create_dataset_version_collection(
+            dataset_collection.id,
+            version,
+            dataset_collection.title,
+            dataset_collection.description,
+        )
+        if not dataset_version_collection:
+            continue
+        dataset_collections[version] = dataset_version_collection
+
+    latest_collection = version_and_store_collections(
+        dataset_collections, api_latest_version
+    )
+
+    dataset_collection.remove_child(cat_latest_version)
+    dataset_collection.add_child(latest_collection)
+
+    return dataset_collection
+
+
+def version_and_store_collections(dataset_collections, latest_version):
     for index, (version, collection) in enumerate(dataset_collections.items()):
         version_ext = VersionExtension.ext(collection)
         version_ext.version = version
@@ -325,9 +337,16 @@ def create_dataset_collection(
 
         collection.save_object(stac_io=S3StacIO(), include_self_link=True)
 
+        if version == latest_version:
+            break
+
     # create latest dataset collection from latest version that gets added
     # to the catalog
-    latest_collection = list(dataset_collections.values())[-1].clone()
+    if latest_version:
+        latest_collection = dataset_collections[latest_version].clone()
+    else:
+        latest_collection = list(dataset_collections.values())[-1].clone()
+
     latest_collection.set_self_href(
         "/".join(
             latest_collection.get_self_href().split("/")[:-1] + ["collection.json"]
@@ -364,5 +383,14 @@ def get_dataset_type(assets):
     return
 
 
+def _get_latest_version(dataset_name: str) -> Union[str, None]:
+    resp = requests.get(f"{DATA_API_URL}/dataset/{dataset_name}/latest")
+    if not resp.ok:
+        logger.warning(f"No dataset version tagged as latest found for {dataset_name}")
+        return
+
+    return resp.json()["data"]["version"]
+
+
 if __name__ == "__main__":
-    create_catalog()
+    update_catalog("gfw_integrated_alerts")

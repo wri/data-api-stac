@@ -1,5 +1,6 @@
+#!/usr/bin/env python
+
 import json
-import os
 from collections import OrderedDict
 from datetime import datetime
 from io import StringIO
@@ -8,20 +9,21 @@ from typing import Optional, Union
 from urllib.parse import urlparse
 
 import boto3
-import pandas as pd
+import click
 import pystac
 import requests
-from pystac import Catalog, Collection
+from pystac import Catalog, Collection, Extent
 from pystac.extensions.table import Column, TableExtension
 from pystac.extensions.version import VersionExtension
-from shapely.geometry import box, shape
-from shapely.ops import unary_union
+
+# from shapely.geometry import box, shape
+# from shapely.ops import unary_union
 from urllib3.exceptions import HTTPError
 
-from .constants import TABULAR_EXTENSIONS, AssetType
-from .globals import CATALOG_NAME, DATA_API_URL, STAC_BUCKET, logger
-from .raster_objects import create_raster_collection
-from .tabular_objects import create_tabular_collection
+from data_api_stac.constants import TABULAR_EXTENSIONS, AssetType
+from data_api_stac.globals import CATALOG_NAME, DATA_API_URL, STAC_BUCKET, logger
+from data_api_stac.raster_objects import create_raster_collection
+from data_api_stac.tabular_objects import create_tabular_collection
 
 stac_extensions = [
     "https://stac-extensions.github.io/projection/v1.0.0/schema.json",
@@ -89,9 +91,7 @@ def create_catalog():
 
     for dataset in datasets:
         logger.info(f"Creating STAC collection for {dataset['dataset']}")
-        dataset_collection = create_dataset_collection(
-            dataset["dataset"], session=session
-        )
+        dataset_collection = create_dataset_collection(dataset["dataset"])
 
         if dataset_collection is None:
             continue
@@ -101,12 +101,20 @@ def create_catalog():
     catalog.save_object(stac_io=S3StacIO())
 
 
+@click.command()
+@click.option(
+    "-d",
+    "--dataset-name",
+    type=str,
+    required=True,
+    help="Name of Data API dataset to add or update in STAC Catalog.",
+)
 def update_catalog(dataset_name: str) -> None:
-    """Update catalog in dataset"""
+    """Add or update dataset in catalog"""
     catalog = Catalog.from_file(CATALOG_URL)
     resp = requests.get(f"{DATA_API_URL}/dataset/{dataset_name}")
     if not resp.ok:
-        raise HTTPError("Datasets not found.")
+        raise HTTPError("Dataset could not be fetched from DATA API.")
 
     dataset_collection = catalog.get_child(dataset_name)
     if dataset_collection is None:
@@ -190,14 +198,7 @@ def create_dataset_version_collection(
         id=dataset_name,
         title=title,
         description=description,
-        extent=pystac.collection.Extent(
-            spatial=get_spatial_extent(all_items),
-            temporal=pystac.collection.TemporalExtent(
-                intervals=[
-                    [version_datetime, version_datetime]
-                ]  # FIXME need to populate with actual start date
-            ),
-        ),
+        extent=Extent.from_items(all_items),
         stac_extensions=stac_extensions,
     )
     dataset_collection.set_self_href(
@@ -210,14 +211,7 @@ def create_dataset_version_collection(
                 id=raster_group,
                 # title=dataset_data["metadata"]["title"],
                 description=description,
-                extent=pystac.collection.Extent(
-                    spatial=get_spatial_extent(items),
-                    temporal=pystac.collection.TemporalExtent(
-                        intervals=[
-                            [version_datetime, version_datetime]
-                        ]  # FIXME need to populate with actual start date
-                    ),
-                ),
+                extent=Extent.from_items(items),
                 stac_extensions=stac_extensions,
             )
             raster_collection.add_items(items)
@@ -393,4 +387,4 @@ def _get_latest_version(dataset_name: str) -> Union[str, None]:
 
 
 if __name__ == "__main__":
-    update_catalog("gfw_integrated_alerts")
+    update_catalog()

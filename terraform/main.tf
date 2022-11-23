@@ -19,6 +19,7 @@ resource "aws_lambda_function" "data_api_stac" {
   role          = aws_iam_role.data_api_stac_lambda.arn
   package_type  = "Image"
   image_uri     = "${module.container_registry.repository_url}:latest"
+  timeout       = 900
 
 
   publish = true

@@ -49,7 +49,7 @@ resource "aws_cloudwatch_event_target" "nightly-sync-integrated" {
   target_id = substr("${local.project}-nightly-sync${local.name_suffix}", 0, 64)
   arn       = aws_lambda_function.data_api_stac.arn
   input     = "{\"datasets\": [\"gfw_integrated_alerts\"]}"
-  # count     = var.environment == "production" ? 1 : 0
+  count     = var.environment == "production" ? 1 : 0
 }
 
 resource "aws_cloudwatch_event_rule" "weekly-fri" {
@@ -63,7 +63,7 @@ resource "aws_cloudwatch_event_target" "all-data-sync-weekly" {
   rule      = aws_cloudwatch_event_rule.weekly-fri.name
   target_id = substr("${local.project}-weekly-fri-sync${local.name_suffix}", 0, 64)
   arn       = aws_lambda_function.data_api_stac.arn
-  # count     = var.environment == "production" ? 1 : 0
+  count     = var.environment == "production" ? 1 : 0
 }
 
 resource "aws_lambda_permission" "allow_cloudwatch" {

@@ -350,16 +350,6 @@ def version_and_store_collections(dataset_collections, latest_version):
     return latest_collection
 
 
-def get_spatial_extent(items):
-    polygons = [
-        shape(item.geometry) if item.geometry else box(*item.bbox) for item in items
-    ]
-    # Returns a union of the two geojson polygons for each item
-    unioned_geometry = unary_union(polygons)
-    # Set the bbox to be the bounds of the unified polygon and return the spatial extent of the collection
-    return pystac.SpatialExtent(bboxes=[unioned_geometry.bounds])
-
-
 def get_dataset_type(assets):
     """Get whether the default assets are of raster, vector or tabular type"""
     if list(filter(lambda asset: asset[0] == AssetType.database_table, assets)):

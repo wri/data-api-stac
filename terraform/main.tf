@@ -36,4 +36,24 @@ resource "aws_lambda_function" "data_api_stac" {
   }
 }
 
+resource "aws_cloudwatch_event_rule" "everyday-4-am-est" {
+  name                = substr("everyday-4-am-est${local.name_suffix}", 0, 64)
+  description         = "Run everyday at 4 am EST"
+  schedule_expression = "cron(0 9 ? * * *)"
+  tags                = local.tags
+}
 
+resource "aws_cloudwatch_event_target" "nightly-sync-integrated" {
+  rule      = aws_cloudwatch_event_rule.everyday-3-am-est.name
+  target_id = substr("${local.project}-nightly-sync${local.name_suffix}", 0, 64)
+  arn       = aws_lambda_function.data_api_stac.arn
+  input     = "{\"datasets\": [\"gfw_integrated_alerts\"]}"
+  # count     = var.environment == "production" ? 1 : 0
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.data_api_stac.function_name
+  principal     = "events.amazonaws.com"
+}

@@ -45,10 +45,24 @@ resource "aws_cloudwatch_event_rule" "everyday-4-am-est" {
 }
 
 resource "aws_cloudwatch_event_target" "nightly-sync-integrated" {
-  rule      = aws_cloudwatch_event_rule.everyday-3-am-est.name
+  rule      = aws_cloudwatch_event_rule.everyday-4-am-est.name
   target_id = substr("${local.project}-nightly-sync${local.name_suffix}", 0, 64)
   arn       = aws_lambda_function.data_api_stac.arn
   input     = "{\"datasets\": [\"gfw_integrated_alerts\"]}"
+  # count     = var.environment == "production" ? 1 : 0
+}
+
+resource "aws_cloudwatch_event_rule" "weekly-fri" {
+  name                = substr("weekly-fri-sync${local.name_suffix}", 0, 64)
+  description         = "Runs once a week on Friday at 5:15 am EST"
+  schedule_expression = "cron(15 10 ? * FRI *)"
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "all-data-sync-weekly" {
+  rule      = aws_cloudwatch_event_rule.weekly-fri.name
+  target_id = substr("${local.project}-weekly-fri-sync${local.name_suffix}", 0, 64)
+  arn       = aws_lambda_function.data_api_stac.arn
   # count     = var.environment == "production" ? 1 : 0
 }
 

@@ -101,14 +101,6 @@ def create_catalog():
     catalog.save_object(stac_io=S3StacIO())
 
 
-@click.command()
-@click.option(
-    "-d",
-    "--dataset-name",
-    type=str,
-    required=True,
-    help="Name of Data API dataset to add or update in STAC Catalog.",
-)
 def update_catalog(dataset_name: str) -> None:
     """Add or update dataset in catalog"""
     catalog = Catalog.from_file(CATALOG_URL)
@@ -377,4 +369,4 @@ def _get_latest_version(dataset_name: str) -> Union[str, None]:
 
 
 if __name__ == "__main__":
-    update_catalog()
+    update_catalog("umd_glad_landsat_alerts")

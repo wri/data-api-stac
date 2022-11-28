@@ -13,7 +13,3 @@ variable "stac_bucket" {
   description = "AWS S3 bucket where STAC Catalog is stored."
 }
 
-variable "data_api_key" {
-  type        = string
-  description = "API key needed to download assets"
-}

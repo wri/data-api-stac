@@ -30,7 +30,6 @@ resource "aws_lambda_function" "data_api_stac" {
   environment {
     variables = {
       ENV              = var.environment
-      GFW_DATA_API_KEY = var.data_api_key
       STAC_BUCKET      = var.stac_bucket
       DATA_API_URL     = var.data_api_url
     }

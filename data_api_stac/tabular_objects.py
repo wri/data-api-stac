@@ -4,7 +4,7 @@ from pystac import Asset, Item
 from pystac.media_type import MediaType
 
 from .constants import AreaType, GadmAreas, TabularDataType
-from .globals import DATA_API_URL, logger, STAC_BUCKET, GFW_DATA_API_KEY
+from .globals import DATA_API_URL, logger, STAC_BUCKET
 
 
 def create_tabular_item(dataset, version, version_datetime, area_name):
@@ -18,20 +18,22 @@ def create_tabular_item(dataset, version, version_datetime, area_name):
 
     area_bbox = resp.json()["data"]["attributes"]["bbox"]
     item = Item(
-            id=area_name,
-            geometry=None,
-            bbox=area_bbox,
-            datetime=version_datetime,
-            stac_extensions=None,
-            properties={}
-        )
+        id=area_name,
+        geometry=None,
+        bbox=area_bbox,
+        datetime=version_datetime,
+        stac_extensions=None,
+        properties={},
+    )
 
     item_href = f"https://{STAC_BUCKET}.s3.amazonaws.com/{dataset}/{version}/items/{area_name}.json"
     item.set_self_href(item_href)
 
     query_string = f"SELECT * from data WHERE iso = '{area_name}'"
     asset_href = f"{DATA_API_URL}/dataset/{dataset}/{version}/query?sql={query_string}"
-    asset = Asset(asset_href, title=area_name, roles=["data"], media_type=MediaType.JSON)
+    asset = Asset(
+        asset_href, title=area_name, roles=["data"], media_type=MediaType.JSON
+    )
 
     item.add_asset(asset=asset, key=area_name)
 
@@ -63,7 +65,6 @@ def create_tabular_collection(dataset, version, version_datetime):
     resp = requests.get(
         f"{DATA_API_URL}/dataset/{areas_list_dataset}/latest/query",
         params={"sql": query_str},
-        headers={"x-api-key": GFW_DATA_API_KEY}
     )
     if not resp.ok:
         logger.error("Can not find areas to create STAC collection")

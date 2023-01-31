@@ -2,17 +2,13 @@ from enum import Enum
 
 
 RASTER_EXTENSIONS = [
-     'https://stac-extensions.github.io/projection/v1.0.0/schema.json',
-     'https://stac-extensions.github.io/raster/v1.0.0/schema.json',
+d    "https://stac-extensions.github.io/projection/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/raster/v1.0.0/schema.json",
 ]
 
-TABULAR_EXTENSIONS = [
-    'https://stac-extensions.github.io/table/v1.2.0/schema.json'
-]
+TABULAR_EXTENSIONS = ["https://stac-extensions.github.io/table/v1.2.0/schema.json"]
 
-DATASET_EXTENSIONS = [
-     'https://stac-extensions.github.io/version/v1.0.0/schema.json'
-]
+DATASET_EXTENSIONS = ["https://stac-extensions.github.io/version/v1.0.0/schema.json"]
 
 
 class AssetType(str, Enum):

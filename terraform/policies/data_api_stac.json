@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Effect": "Allow",
+          "Action": [
+              "lambda:InvokeFunction",
+              "cloudwatch:*",
+              "events:*",
+              "iam:GetPolicy",
+              "iam:GetPolicyVersion",
+              "iam:GetRole",
+              "iam:GetRolePolicy",
+              "iam:ListAttachedRolePolicies",
+              "iam:ListRolePolicies",
+              "iam:ListRoles",
+              "iam:PassRole",
+              "lambda:*",
+              "logs:*",
+              "s3:*"
+          ],
+          "Resource": "*"
+      }
+  ]
+}

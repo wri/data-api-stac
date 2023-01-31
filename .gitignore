@@ -1,1 +1,19 @@
+*__pycache__*
+.vscode/
+*.egg-info*
+
+terraform/.terraform/*
+terraform/terraform.tfplan
+
+# MyPy
+.mypy_cache
+
+# GIT
+.git
+
+# Environment Files
+/.env
+
 .DS_Store
+
+*.ipynb_checkpoints*

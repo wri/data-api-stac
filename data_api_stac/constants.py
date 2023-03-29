@@ -2,7 +2,7 @@ from enum import Enum
 
 
 RASTER_EXTENSIONS = [
-d    "https://stac-extensions.github.io/projection/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/projection/v1.0.0/schema.json",
     "https://stac-extensions.github.io/raster/v1.0.0/schema.json",
 ]
 

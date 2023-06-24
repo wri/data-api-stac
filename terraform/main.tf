@@ -8,7 +8,7 @@ terraform {
 }
 
 module "container_registry" {
-  source     = "git::https://github.com/wri/gfw-terraform-modules.git//terraform/modules/container_registry?ref=v0.4.2.2"
+  source     = "git::https://github.com/wri/gfw-terraform-modules.git//terraform/modules/container_registry?ref=v0.4.5"
   image_name = "${local.project}${local.name_suffix}"
   root_dir   = "../${path.root}"
 }
